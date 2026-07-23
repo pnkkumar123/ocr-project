@@ -46,11 +46,12 @@ def _ocr_engine() -> OcrEngine:
     return OcrEngine()
 
 
-# OCR is far slower than the text-layer path (seconds per page vs.
-# milliseconds), so it only runs where there's no text layer to read the
-# schedule from, and only over a bounded number of pages — a raster schedule
-# table is normally one or two sheets, not the whole set.
-_MAX_OCR_SCHEDULE_PAGES = 5
+# OCR is far slower than the text-layer path (minutes per page on CPU at full
+# render resolution vs. milliseconds for text extraction — see PROGRESS.md), so
+# it only runs where there's no text layer to read the schedule from, and only
+# over a bounded number of pages — a raster schedule table is normally one or
+# two sheets, not the whole set.
+_MAX_OCR_SCHEDULE_PAGES = 3
 
 
 def _ocr_schedule_rows(info) -> list[ScheduleRow]:

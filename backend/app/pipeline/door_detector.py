@@ -42,6 +42,9 @@ class DoorDetector:
         tile_size: int = 1024,
         overlap: float = 0.2,        # 20% tile overlap so edge doors aren't cut
         nms_iou: float = 0.5,        # merge threshold for overlapping tile boxes
+        device: str | None = None,   # None = ultralytics default (CPU unless CUDA present);
+                                      # production is deliberately CPU-only (see docs/AWS_COST.md) —
+                                      # pass "cuda:0" only for local/Colab dev-time speedups
     ) -> None:
         self.weights = Path(weights)
         self.conf = conf
@@ -51,6 +54,7 @@ class DoorDetector:
         self.tile_size = tile_size
         self.overlap = overlap
         self.nms_iou = nms_iou
+        self.device = device
         self._model = None
 
     def _ensure_model(self):
@@ -77,7 +81,7 @@ class DoorDetector:
         model = self._ensure_model()
         names = model.names
         out: list[list[_Box]] = []
-        for r in model(images, conf=self.conf, verbose=False):
+        for r in model(images, conf=self.conf, verbose=False, device=self.device):
             boxes: list[_Box] = []
             for box in r.boxes:
                 if names[int(box.cls[0])] not in self.target_classes:

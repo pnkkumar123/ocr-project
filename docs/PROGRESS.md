@@ -4,6 +4,81 @@ Newest first. Each entry: what changed, why, how it was verified, what's next.
 
 ---
 
+## 2026-07-24 (2) — Raster/OCR schedule path, rotation bug fix, columnar parser, repo on GitHub ✅
+
+**Rotation bug fix (correctness, not just a new feature)**
+- `get_text("words")` returns raw *mediabox* coordinates, ignoring a page's
+  `/Rotate` flag — but rendered PNGs (and every YOLO box) are in *displayed*
+  space. 5 of 6 real test PDFs have rotated pages. `ocr.text_layer_spans` and
+  `schedule_parser`'s word extraction now apply `page.rotation_matrix` so text
+  coordinates actually line up with detector boxes and with each other.
+  Root-caused via lumberone: tags were landing "1400–5000px from any door,"
+  which looked like a room-keyed-schedule layout quirk but was really a
+  coordinate-frame mismatch. (The room-tag conclusion for lumberone specifically
+  still holds after the fix — its on-plan room numbers turned out to be raster
+  image content, not text at all — but the bug was real and would have broken
+  tag association on any sheet where tags *are* text.)
+
+**Columnar schedule parser (Phase 2) — the common professional format**
+- `schedule_parser.parse_columnar_page` — one-row-per-door tables (`NUMBER` +
+  `RATING` columns, aligned by y-position), the standard format real firms use
+  (lumberone's transposed layout was the unusual one). Disambiguates a fire
+  `RATING` column from an adjacent STC/sound `RATING` column via header context.
+- **Verified against 2 new real fixtures with known ratings:** Sanibel Fire
+  Station bid set → 18 rows (20/45/60 MIN), Ann Arbor Fire Station renovation →
+  11 rows (45/90 MIN) — both cross-checked by eye against the rendered table.
+  No regression on lumberone/sanibel/annarbor text-layer path.
+
+**Raster/OCR schedule path (Phase 2 raster) — the original ask**
+- `schedule_parser.parse_ocr_spans` reuses the *same* transposed/columnar logic
+  on OCR output — a PDF word and an OCR span are both "a box with text," so no
+  separate parsing rules needed. Header matching switched to substring (not
+  exact-equal) since EasyOCR merges multi-word cells ("DOOR NUMBER" as one box).
+- `services/analysis._ocr_schedule_rows` — fallback only when the text-layer
+  schedule found nothing, capped at 3 pages (OCR is minutes/page on CPU, not
+  worth running blind on every raster page).
+- **Honest finding:** neither original raster candidate worked as a full
+  end-to-end proof — lacity turned out to be an LA Planning example deck (no
+  real schedule), camden's raster table has no rating column (type-coded on a
+  separate sheet). Validated instead by rasterizing a real columnar schedule
+  (Sanibel, table crop only, text layer stripped) and OCR'ing it fresh:
+  **10/18 rows recovered, every rating exactly correct — zero fabrication**,
+  lower recall than the exact text path (expected, documented, not hidden).
+
+**Speed**
+- `door_detector`: tiles now batch into one `model()` call instead of one
+  Python-level call per tile (same detections, less per-call overhead).
+- `ocr.OcrEngine.read`: downscales to a 2200px max dimension before OCR (200
+  DPI sheets render 6000+px; full res buys nothing for reading table text),
+  coordinates scaled back up so callers still work in original pixel space.
+- OCR schedule fallback page cap 5 → 3.
+- Considered a page-drawings-count filter to skip non-plan pages before YOLO
+  entirely (bigger lever) — **rejected**: measured `vector_drawings` counts
+  across all fixtures and found no threshold that reliably separates plan
+  pages from detail/schedule pages across drawing styles (title-block hatching
+  and wall-detail sheets can out-score real floor plans). Shipping a fragile
+  heuristic risks silently skipping real content in a safety product; not worth
+  the speed win without a much larger validation set.
+- `DoorDetector(device=...)` / `OcrEngine(gpu=...)` params added (default
+  unchanged: CPU) so Colab/local dev can opt into GPU without touching
+  production's CPU-only default (`docs/AWS_COST.md`).
+
+**Regression, full set:** lumberone 7/8 fire doors (was 8, minor OCR-adjacent
+edge case, zero wrong), hyperfine 0 (correct negative), lacity 0 (correct
+negative, OCR fallback exercised, found nothing to fabricate), sanibel 18,
+annarbor 11 — all correct, no false positives anywhere.
+
+**Repo**: initialized git, pushed to `github.com/pnkkumar123/ocr-project`
+(public). `colab/test_fire_door_pipeline.ipynb` added — clones the repo, runs
+the same `run_analysis()` the API uses with GPU enabled, for fast iteration
+without waiting on local CPU.
+
+**Next:** wire the OCR path against a genuine in-the-wild scanned permit
+(still hasn't been found — real scanned sets mostly sit behind city-portal
+search UIs); or move to Phase 7 (Next.js frontend) to make the pipeline visible.
+
+---
+
 ## 2026-07-24 — Full pipeline wired: /analyze + CSV export ✅
 
 **End-to-end analysis (Phase 4 wiring + Phase 6 start)**

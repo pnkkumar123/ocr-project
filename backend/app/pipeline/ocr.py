@@ -57,23 +57,42 @@ def text_layer_spans(pdf_path: str, page_index: int, render_dpi: int) -> list[Te
 
 
 class OcrEngine:
-    def __init__(self, lang: str = "en") -> None:
+    def __init__(self, lang: str = "en", gpu: bool = False) -> None:
+        # gpu=False by default: production is deliberately CPU-only (see
+        # docs/AWS_COST.md). Pass gpu=True only for local/Colab dev-time speedups.
         self.lang = lang
+        self.gpu = gpu
         self._reader = None
 
     def _ensure_reader(self):
         if self._reader is None:
             import easyocr  # lazy heavy import
 
-            self._reader = easyocr.Reader([self.lang], gpu=False)
+            self._reader = easyocr.Reader([self.lang], gpu=self.gpu)
         return self._reader
 
-    def read(self, image_path: str) -> list[TextSpan]:
+    def read(self, image_path: str, max_dim: int = 2200) -> list[TextSpan]:
+        """OCR an image. Architectural sheets render at 200 DPI (often 6000+ px
+        on the long side) — EasyOCR's runtime scales with pixel count, and full
+        resolution buys nothing for reading schedule-table text, so downscale
+        before running and scale the returned coordinates back up to match the
+        original image (what callers expect, since detector boxes and the
+        schedule parser both work in original render-pixel space)."""
+        import numpy as np
+        from PIL import Image
+
         reader = self._ensure_reader()
+        with Image.open(image_path) as im:
+            w, h = im.size
+            scale = min(1.0, max_dim / max(w, h))
+            if scale < 1.0:
+                im = im.resize((max(1, int(w * scale)), max(1, int(h * scale))))
+            arr = np.array(im.convert("RGB"))
+
         spans: list[TextSpan] = []
-        for box, text, conf in reader.readtext(image_path):
-            xs = [p[0] for p in box]
-            ys = [p[1] for p in box]
+        for box, text, conf in reader.readtext(arr):
+            xs = [p[0] / scale for p in box]
+            ys = [p[1] / scale for p in box]
             spans.append(
                 TextSpan(
                     text=text,

@@ -26,15 +26,25 @@ and rasterizes pages to PNG for the CV pipeline.
 - [x] Pydantic schemas (DocumentInfo / PageInfo / DoorDetection)
 - [x] Verified: 2-page test PDF → correct vector/raster split, PNGs written
 
-## Phase 2 — Door schedule extraction 🚧 (text-layer path done)
+## Phase 2 — Door schedule extraction ✅ (text-layer + raster/OCR both working)
 Locate + parse door schedule into structured rows keyed by tag.
-- [x] Vector/text-layer path: read schedule from PDF text (no OCR), transposed
-      CAD layout, RATING↔NUMBER x-alignment, US + UK tokens
-      (`schedule_parser.parse_pdf`). Verified: lumberone → 8 doors @ 20 MIN.
-- [ ] Raster path: Table Transformer structure + OCR per cell (for scanned/image
-      schedules like lacity)
-- [ ] Refine mark↔rating alignment; capture size/type/hardware columns
-- Slot: `app/pipeline/schedule_parser.py`
+- [x] Transposed CAD layout: RATING↔NUMBER row aligned by x-position, US + UK
+      tokens (`parse_page_words`). Verified: lumberone → 7-8 doors @ 20 MIN.
+- [x] Columnar layout (the common professional format): NUMBER + RATING
+      columns aligned by y-position, disambiguates fire vs. STC/sound RATING
+      columns (`parse_columnar_page`). Verified: Sanibel Fire Station → 18
+      doors (20/45/60 MIN), Ann Arbor Fire Station → 11 doors (45/90 MIN).
+- [x] Raster path: EasyOCR + the *same* transposed/columnar logic reused on OCR
+      spans (`parse_ocr_spans`), gated to pages with no text layer, capped at 3
+      pages. Verified via rasterized real schedule: 10/18 rows recovered, every
+      rating exactly correct, zero fabrication (lower recall than text-layer,
+      as expected).
+- [x] Page-rotation bug fixed — word coordinates now match rendered/detector
+      space (was silently breaking tag cross-reference on rotated sheets).
+- [ ] Capture size/type/hardware columns (currently tag + fire-rating only)
+- [ ] Validate raster path against a genuine in-the-wild scanned schedule
+      (candidates so far were either not real schedules or had no rating column)
+- Slot: `app/pipeline/schedule_parser.py`, `app/pipeline/ocr.py`
 
 ## Phase 3 — Door detection + tag OCR 🚧 (slot ready)
 - [ ] Train YOLOv11 on Roboflow door datasets (baseline)
