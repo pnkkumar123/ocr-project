@@ -4,6 +4,50 @@ Newest first. Each entry: what changed, why, how it was verified, what's next.
 
 ---
 
+## 2026-07-24 (3) — /analyze made async (background job + polling) ✅
+
+**Why:** `/analyze` blocked the HTTP request for the full pipeline duration —
+minutes on a large document (Colab GPU test: Sanibel's 90 pages took 525s).
+A synchronous request that long risks client/browser timeouts and blocks the
+server thread per request.
+
+**What:** `POST /analyze` now returns an `AnalysisJob` immediately (202,
+`status=pending`) instead of the summary. `GET /analyze/{job_id}` polls for
+`pending → running → completed` (summary populated) or `failed` (error
+populated). `GET /analyze/{job_id}/export.csv` builds CSV from the completed
+job — no recompute, unlike the old direct `/export.csv` (kept, documented as
+the blocking convenience path for scripts).
+
+**Implementation — deliberately not Celery/Redis (yet):** a single in-process
+`dict` job store (`app/services/analysis.py`), executed via FastAPI's
+`BackgroundTasks`, which Starlette runs on a threadpool automatically for sync
+functions — so it doesn't block the event loop for other requests, without
+standing up new infra. Explicitly scoped as MVP-appropriate: doesn't survive a
+restart or scale across multiple server processes — that's the real trigger
+for Celery/RQ + Redis, already on the roadmap (`PHASES.md` "Async /
+production"), not needed at today's single-server stage.
+
+**Verified:** job lifecycle (pending → running → completed) on lumberone;
+`unknown job_id` returns `None`/404 correctly; CSV from a completed job's
+summary matches the direct-export CSV (37 lines = 36 doors + header, same as
+before); app still boots cleanly on the base venv (no torch) with all 6 routes
+registered.
+
+**Considered and rejected: targeted mini-OCR for doors with no text-layer tag**
+(OCR a small crop around each untagged door instead of the whole page, to
+catch raster/image-based room tags like lumberone's). Rejected for now:
+variable, data-dependent cost per document (a "messy" document could trigger
+dozens of small OCR calls) is exactly the kind of unpredictable latency that
+needs a real job queue to absorb safely, not the in-process store just built.
+Revisit once Celery/Redis exists. Until then, "not located on plan" is honest
+and correct — the fire rating itself is never affected, only the visual
+pin lands via human review instead of an automated guess.
+
+**Next:** Phase 7 (Next.js frontend) — polling UI for job status is the
+natural first piece now that the API is job-shaped.
+
+---
+
 ## 2026-07-24 (2) — Raster/OCR schedule path, rotation bug fix, columnar parser, repo on GitHub ✅
 
 **Rotation bug fix (correctness, not just a new feature)**
