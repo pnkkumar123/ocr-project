@@ -102,3 +102,22 @@ class AnalysisSummary(BaseModel):
     fire_rated_located: int             # doors visually matched to a fire rating
     schedule_fire_doors: list[ScheduleFireDoor]  # authoritative inventory from schedule
     pages: list[PageDetections]
+
+
+class JobStatus(str, Enum):
+    pending = "pending"
+    running = "running"
+    completed = "completed"
+    failed = "failed"
+
+
+class AnalysisJob(BaseModel):
+    """Background analysis job — /analyze returns one of these immediately
+    instead of blocking the request for however long detection+OCR takes
+    (minutes, on a large document). Poll GET .../analyze/{job_id} for status."""
+
+    job_id: str
+    document_id: str
+    status: JobStatus
+    summary: AnalysisSummary | None = None
+    error: str | None = None

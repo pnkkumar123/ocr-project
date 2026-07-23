@@ -12,14 +12,18 @@ from __future__ import annotations
 
 import csv
 import io
+import uuid
 from functools import lru_cache
+from threading import Lock
 
 from PIL import Image, ImageDraw
 
 from app.core.config import settings
 from app.models.schemas import (
+    AnalysisJob,
     AnalysisSummary,
     DoorDetection,
+    JobStatus,
     PageDetections,
     PageInfo,
     ScheduleFireDoor,
@@ -172,12 +176,73 @@ def run_analysis(document_id: str) -> AnalysisSummary | None:
     )
 
 
+# In-process background jobs: a large document's analysis can take minutes
+# (tiled YOLO + OCR fallback), far past what a browser/HTTP client should sit
+# waiting on. `/analyze` returns a job immediately; the actual work runs on
+# Starlette's threadpool (FastAPI's BackgroundTasks does this automatically for
+# a plain sync function) so it doesn't block the event loop for other requests.
+#
+# This is deliberately NOT Celery/Redis — that's the right answer once this
+# runs multiple server processes or needs to survive a restart (see PHASES.md
+# "Async / production (later)"), but adds real infra to stand up and operate.
+# A single in-process job store is the honest scope for where this project is
+# today: one server, one worker, MVP stage.
+_jobs: dict[str, AnalysisJob] = {}
+_jobs_lock = Lock()
+
+
+def start_analysis_job(document_id: str) -> AnalysisJob | None:
+    """Create a pending job for a document; caller schedules `run_job` to
+    actually execute it (kept separate so routes control the background-task
+    wiring, this module doesn't need to know about FastAPI)."""
+    if load_document(document_id) is None:
+        return None
+    job = AnalysisJob(job_id=uuid.uuid4().hex, document_id=document_id, status=JobStatus.pending)
+    with _jobs_lock:
+        _jobs[job.job_id] = job
+    return job
+
+
+def get_job(job_id: str) -> AnalysisJob | None:
+    with _jobs_lock:
+        return _jobs.get(job_id)
+
+
+def run_job(job_id: str) -> None:
+    """Execute a previously-created job in place. Safe to call from a
+    background thread — only touches shared state through `_jobs_lock`."""
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+        if job is None:
+            return
+        job.status = JobStatus.running
+
+    try:
+        summary = run_analysis(job.document_id)
+    except Exception as exc:  # noqa: BLE001 — surface any failure to the poller, don't crash the thread silently
+        with _jobs_lock:
+            job.status = JobStatus.failed
+            job.error = str(exc)
+        return
+
+    with _jobs_lock:
+        job.status = JobStatus.completed
+        job.summary = summary
+
+
 def export_csv(document_id: str) -> str | None:
-    """Run the full analysis and return a CSV door inventory."""
+    """Run the full analysis and return a CSV door inventory.
+
+    Synchronous convenience for scripts/notebooks — re-runs the full pipeline,
+    so it's just as slow as `/analyze` was before jobs existed. The API route
+    builds CSV from an already-completed job instead (see `summary_to_csv`)."""
     summary = run_analysis(document_id)
     if summary is None:
         return None
+    return summary_to_csv(summary)
 
+
+def summary_to_csv(summary: AnalysisSummary) -> str:
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow(
