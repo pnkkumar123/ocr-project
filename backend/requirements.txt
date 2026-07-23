@@ -1,0 +1,17 @@
+# --- Phase 1: PDF ingestion API (works on Python 3.14) ---
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+pydantic==2.10.4
+pydantic-settings==2.7.1
+pymupdf==1.25.2          # import fitz — PDF parsing + rendering
+pillow==11.1.0
+numpy==2.2.1
+
+# --- Phase 3+: YOLO / CV / OCR (install in a Python 3.12 venv) ---
+# ultralytics==8.3.*     # YOLOv11
+# torch torchvision      # match your CUDA build
+# opencv-python-headless
+# paddleocr / easyocr
+# roboflow               # dataset download
+# pandas openpyxl        # Excel/CSV export

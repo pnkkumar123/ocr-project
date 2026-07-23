@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.venv-ml/
+venv/
+*.egg-info/
+
+# App storage (uploaded PDFs + rendered pages)
+backend/storage/
+
+# ML weights / datasets / test PDFs
+*.pt
+datasets/
+runs/
+
+# Local pip cache + temp (redirected to D: to keep C: clean)
+.pipcache/
+.tmp/
+
+# Env
+.env
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Claude Code harness state (local only)
+.claude/

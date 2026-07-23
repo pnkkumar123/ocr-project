@@ -1,0 +1,17 @@
+# ML INFERENCE deps for the backend (Python 3.12 venv: .venv-ml)
+# Training happens on Google Colab (GPU); this runs the trained weights on CPU.
+# Install with pip cache/temp pointed at D: to keep C: clean, e.g.:
+#   PIP_CACHE_DIR=D:/AIProjects/ocr-project/.pipcache \
+#   TMP=D:/AIProjects/ocr-project/.tmp \
+#   ./.venv-ml/Scripts/python.exe -m pip install -r requirements-ml.txt
+
+torch                       # CPU build (default on Windows, no CUDA)
+torchvision
+ultralytics                 # YOLOv11 inference (doors, type, wall-seg)
+opencv-python-headless
+easyocr                     # component #3 tag + schedule OCR
+transformers                # component #4 Table Transformer (schedule structure)
+pillow
+numpy
+pandas
+openpyxl                    # Excel export
