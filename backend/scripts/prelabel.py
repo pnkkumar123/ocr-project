@@ -120,7 +120,10 @@ def _candidate_pages(pdf_path: Path, n_candidates: int) -> list[int]:
     with fitz.open(pdf_path) as doc:
         for i, page in enumerate(doc):
             try:
-                text = page.get_text().upper()
+                # Collapse whitespace: sheet titles are laid out across several
+                # lines/spans ("MECHANICAL\nNEW WORK\nPLAN"), so phrase and
+                # regex matching only works on a normalized single-line string.
+                text = re.sub(r"\s+", " ", page.get_text().upper())
                 drawings = len(page.get_drawings())
             except Exception:  # noqa: BLE001 — a malformed page shouldn't abort the scan
                 text, drawings = "", 0
