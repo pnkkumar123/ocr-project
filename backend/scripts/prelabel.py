@@ -24,6 +24,7 @@ Usage (ML venv, which has torch/ultralytics):
 from __future__ import annotations
 
 import argparse
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -61,35 +62,77 @@ def _write_yolo_labels(detections, img_w: int, img_h: int, dst: Path) -> int:
     return len(lines)
 
 
+# Sheet types that are dense linework but contain NO door symbols worth
+# labeling. The detector fires hundreds of false boxes on their repeating
+# patterns — measured: an Ann Arbor *ceiling* plan produced 511 "doors" (ceiling
+# tile grid + light fixtures), a hyperfine *roof framing* sheet produced 120
+# (trusses). Every one wrong.
+#
+# Exclusion is the primary filter, not an allow-list: real sets title their
+# floor plans many different ways — Sanibel's are "LIFE SAFETY PLAN" and
+# "FURNITURE AND EQUIPMENT PLAN", never the literal "FLOOR PLAN" — so requiring
+# a positive phrase silently drops good pages. Anything dense that *isn't* one
+# of these is a plausible plan; the door-count guard below catches the rest.
+#
+# Phrases are deliberately two words ("CEILING PLAN", not "CEILING"): real floor
+# plans routinely mention "DETAIL"/"SCHEDULE"/"SECTION" in their keynotes, and
+# matching bare words excluded almost every genuine plan.
+_NOT_PLAN_PHRASES = (
+    "CEILING PLAN", "REFLECTED CEILING",
+    "ROOF PLAN", "ROOF FRAMING", "FRAMING PLAN", "FOUNDATION PLAN",
+    "SITE PLAN", "LANDSCAPE PLAN", "GRADING PLAN", "DRAINAGE PLAN",
+    "UTILITY PLAN", "IRRIGATION PLAN",
+    "ELECTRICAL PLAN", "MECHANICAL PLAN", "PLUMBING PLAN", "HVAC PLAN",
+    "LIGHTING PLAN", "POWER PLAN",
+)
+
+# MEP/structural sheets often *are* titled "... FLOOR PLAN" — e.g. "PLUMBING NEW
+# WORK FLOOR PLAN", "MECHANICAL DEMOLITION FLOOR PLAN". They show the same floor
+# layout as the architectural sheet with equipment overlaid, so they add
+# duplicate geometry plus symbols that trigger false detections. Catch the
+# discipline word appearing anywhere just before "PLAN".
+_MEP_PLAN_RE = re.compile(
+    r"(PLUMBING|MECHANICAL|ELECTRICAL|HVAC|STRUCTURAL|FIRE ALARM|FIRE PROTECTION)"
+    r"[A-Z0-9 &/\-]{0,30}PLAN"
+)
+
+# A real floor-plan page has tens of doors, not hundreds. A page yielding more
+# than this is a false-positive storm on a repeating pattern, not a plan.
+_MAX_PLAUSIBLE_DOORS = 90
+
+
 def _candidate_pages(pdf_path: Path, n_candidates: int) -> list[int]:
-    """Cheaply rank pages by how 'floor-plan-like' they are, WITHOUT rendering
-    or running the model — a full set can be hundreds of pages (Ann Arbor is
-    799) and rendering + detecting all of them to find ~6 keepers is enormously
-    wasteful.
+    """Pick likely floor-plan pages WITHOUT rendering or running the model — a
+    full set can be hundreds of pages (Ann Arbor is 799), so rendering and
+    detecting all of them to find ~5 keepers is enormously wasteful.
 
-    Signal: floor plans are dense linework (many vector draw ops) or a scanned
-    image; title/notes/schedule sheets are mostly sparse text.
+    Density alone is not enough — it happily selects ceiling/roof/structural
+    sheets, which are dense linework with zero doors. So: dense **and** not one
+    of the known non-plan sheet types (see `_NOT_PLAN_PHRASES`), ranked by
+    density.
 
-    Note this is the same page-filtering heuristic deliberately *rejected* for
-    the production detection path (see PROGRESS.md) — there, wrongly skipping a
-    page could silently lose a real fire door, which is unacceptable. Here it
-    only picks which pages to *offer for labeling*, where missing one costs
-    nothing: we just want ~6 good pages, not completeness. Same heuristic,
-    different stakes.
+    Note this is the same page-filtering idea deliberately *rejected* for the
+    production detection path (see PROGRESS.md) — there, wrongly skipping a page
+    could silently lose a real fire door. Here it only chooses which pages to
+    *offer for labeling*, where missing one costs nothing.
     """
     scored: list[tuple[float, int]] = []
     with fitz.open(pdf_path) as doc:
         for i, page in enumerate(doc):
             try:
+                text = page.get_text().upper()
                 drawings = len(page.get_drawings())
             except Exception:  # noqa: BLE001 — a malformed page shouldn't abort the scan
-                drawings = 0
+                text, drawings = "", 0
             images = len(page.get_images())
-            # Scanned plans carry their linework inside an image, so an embedded
-            # raster counts for a lot; pure-text sheets score near zero.
-            score = drawings + images * 500
-            if score > 200:
-                scored.append((score, i))
+
+            density = drawings + images * 500
+            if density < 200:
+                continue  # blank / notes / title sheet
+            if any(bad in text for bad in _NOT_PLAN_PHRASES) or _MEP_PLAN_RE.search(text):
+                continue  # ceiling / roof / structural / MEP sheet
+            scored.append((density, i))
+
     scored.sort(reverse=True)
     return sorted(idx for _, idx in scored[:n_candidates])
 
@@ -114,6 +157,16 @@ def prelabel_pdf(
             continue
         src = settings.storage_dir / page.image_path
         doors = detector.detect(str(src), page.index)
+        # Guard against false-positive storms: a page yielding hundreds of
+        # "doors" is a repeating pattern the model latched onto (ceiling grid,
+        # roof trusses), not a plan. Labeling it would mean deleting hundreds of
+        # boxes by hand, and keeping any of them would poison the training set.
+        if len(doors) > _MAX_PLAUSIBLE_DOORS:
+            print(
+                f"  p{page.index}: {len(doors)} doors — SKIPPED (implausible, "
+                f"likely a non-plan sheet)", flush=True,
+            )
+            continue
         if doors:
             per_page.append((page, doors, src))
         print(f"  p{page.index}: {len(doors)} doors", flush=True)
