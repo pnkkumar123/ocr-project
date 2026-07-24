@@ -29,3 +29,6 @@ Thumbs.db
 
 # Claude Code harness state (local only)
 .claude/
+
+# Pre-labeling working folder (images + labels, not source)
+datasets/label_inbox/
